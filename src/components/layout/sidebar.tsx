@@ -189,8 +189,8 @@ export function Sidebar() {
         dir={lang === "ar" ? "rtl" : "ltr"}
         className={cn(
           "flex flex-col w-72 bg-sidebar border-s border-sidebar-border h-screen z-50 transition-transform duration-300",
-          "fixed inset-y-0 inset-inline-start-0 lg:sticky lg:top-0 lg:w-64 lg:translate-x-0",
-          mobileSidebarOpen ? "translate-x-0" : "translate-x-full rtl:-translate-x-full lg:translate-x-0"
+          "fixed inset-y-0 right-0 lg:sticky lg:top-0 lg:w-64 lg:translate-x-0 lg:z-30",
+          mobileSidebarOpen ? "translate-x-0" : "translate-x-full lg:translate-x-0"
         )}
       >
       {/* Brand */}

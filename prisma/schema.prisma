@@ -6,9 +6,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  // يتم ضبطها من متغير البيئة DATABASE_URL — افتراضياً ملف محلي
-  url = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ==================== الهوية والصلاحيات ====================

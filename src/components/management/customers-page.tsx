@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useAppStore } from "@/lib/store";
 import { tr } from "@/lib/translations";
 import { Card, CardContent } from "@/components/ui/card";
@@ -51,15 +51,21 @@ import {
   Calendar,
   CheckCircle2,
   Loader2,
+  RefreshCw,
 } from "lucide-react";
 
 export function CustomersPage() {
   const lang = useAppStore((s) => s.lang);
-  const customers = useAppStore((s) => s.customers);
   const services = useAppStore((s) => s.services);
   const addCustomer = useAppStore((s) => s.addCustomer);
   const updateCustomer = useAppStore((s) => s.updateCustomer);
   const deleteCustomer = useAppStore((s) => s.deleteCustomer);
+
+  // إدارة العملاء محلياً لجلب فوري بالدفعات (Cursor / Limit)
+  const [customerList, setCustomerList] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
@@ -77,17 +83,57 @@ export function CustomersPage() {
   const [saving, setSaving] = useState(false);
   const [formDirty, setFormDirty] = useState(false);
 
+  // جلب أحدث 100 عميل فور فتح الصفحة في أقل من ثانية
+  const fetchCustomers = async (cursorId?: string | null) => {
+    try {
+      if (cursorId) {
+        setLoadingMore(true);
+      } else {
+        setLoading(true);
+      }
+
+      const url = cursorId 
+        ? `/api/customers?cursor=${cursorId}`
+        : `/api/customers`;
+
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (data.ok && Array.isArray(data.customers)) {
+        if (cursorId) {
+          setCustomerList((prev) => [...prev, ...data.customers]);
+        } else {
+          setCustomerList(data.customers);
+        }
+        setNextCursor(data.nextCursor ?? null);
+      } else if (Array.isArray(data)) {
+        setCustomerList(data);
+        setNextCursor(null);
+      }
+    } catch (err) {
+      console.error("Failed to load customers:", err);
+      toast.error(lang === "ar" ? "تعذر جلب بيانات العملاء" : "Failed to load customers");
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchCustomers();
+  }, []);
+
   const list = useMemo(() => {
-    if (!search.trim()) return customers;
+    if (!search.trim()) return customerList;
     const q = search.toLowerCase();
-    return customers.filter(
+    return customerList.filter(
       (c) =>
         c.fullName.toLowerCase().includes(q) ||
-        c.customerNumber.toLowerCase().includes(q) ||
-        c.phoneNumber.toLowerCase().includes(q) ||
+        (c.customerNumber && c.customerNumber.toLowerCase().includes(q)) ||
+        (c.phoneNumber && c.phoneNumber.toLowerCase().includes(q)) ||
         (c.passportNumber ?? "").toLowerCase().includes(q)
     );
-  }, [customers, search]);
+  }, [customerList, search]);
 
   const openCreate = () => {
     setForm({ fullName: "", phoneNumber: "", passportNumber: "", nationalId: "", cardNumber: "", referralSource: "" });
@@ -97,7 +143,7 @@ export function CustomersPage() {
     setOpen(true);
   };
 
-  const openEdit = (c: typeof customers[0]) => {
+  const openEdit = (c: any) => {
     setForm({
       fullName: c.fullName,
       phoneNumber: c.phoneNumber,
@@ -123,10 +169,14 @@ export function CustomersPage() {
     try {
       if (editingId) {
         await updateCustomer(editingId, form);
+        setCustomerList((prev) =>
+          prev.map((c) => (c.id === editingId ? { ...c, ...form } : c))
+        );
         toast.success(lang === "ar" ? "تم تحديث العميل" : "Customer updated");
       } else {
         const result = await addCustomer(form);
         if (result) {
+          fetchCustomers(); // إعادة جلب فوري للظهور في الرأس
           toast.success(lang === "ar" ? "تم حفظ العميل" : "Customer saved");
         } else {
           toast.error(lang === "ar" ? "فشل حفظ العميل" : "Failed to save customer");
@@ -148,6 +198,7 @@ export function CustomersPage() {
     if (!deleteId) return;
     try {
       await deleteCustomer(deleteId);
+      setCustomerList((prev) => prev.filter((c) => c.id !== deleteId));
       setDeleteId(null);
       toast.success(lang === "ar" ? "تم حذف العميل" : "Customer deleted");
     } catch (err) {
@@ -192,11 +243,11 @@ export function CustomersPage() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">{tr(lang, "nav_customers")}</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {lang === "ar" ? `إجمالي العملاء: ${customers.length}` : `Total customers: ${customers.length}`}
+            {lang === "ar" ? `العملاء المعروضين: ${customerList.length}` : `Loaded customers: ${customerList.length}`}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* تصدير Excel أسبوعي/شهري */}
+          {/* تصدير Excel */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="bg-background gap-2">
@@ -220,7 +271,8 @@ export function CustomersPage() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {/* تصدير PDF أسبوعي/شهري/سنوي */}
+
+          {/* تصدير PDF */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="bg-background gap-2">
@@ -244,6 +296,7 @@ export function CustomersPage() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+
           <Button
             className="bg-gradient-to-r from-[#7C3AED] to-[#A855F7] hover:opacity-95 gap-2 shadow-sm"
             onClick={openCreate}
@@ -284,7 +337,19 @@ export function CustomersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {list.length === 0 ? (
+                {loading ? (
+                  /* مؤشر تحميل فوري يمنع إظهار رسالة "لا يوجد عملاء" */
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-16">
+                      <div className="flex flex-col items-center justify-center gap-3 text-muted-foreground">
+                        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                        <p className="text-sm font-medium">
+                          {lang === "ar" ? "جاري تحميل بيانات العملاء بسرعة..." : "Loading customers..."}
+                        </p>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : list.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7} className="text-center py-12">
                       <div className="flex flex-col items-center gap-3 text-muted-foreground">
@@ -302,8 +367,8 @@ export function CustomersPage() {
                       <TableRow key={c.id} className="hover:bg-accent/30">
                         <TableCell>
                           <div className="flex items-center gap-2.5">
-                            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-pastel-lilac to-pastel-lilac flex items-center justify-center text-pastel-lilac font-bold text-sm">
-                              {c.fullName.charAt(0)}
+                            <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
+                              {c.fullName ? c.fullName.charAt(0) : "—"}
                             </div>
                             <div>
                               <div className="font-medium text-foreground text-sm">{c.fullName}</div>
@@ -318,7 +383,7 @@ export function CustomersPage() {
                         <TableCell className="text-sm text-muted-foreground num">{c.joinedOn}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{c.referralSource ?? "—"}</TableCell>
                         <TableCell>
-                          <Badge variant="secondary" className={c.isActive ? "bg-pastel-mint text-pastel-mint" : "bg-muted text-muted-foreground"}>
+                          <Badge variant="secondary" className={c.isActive ? "bg-emerald-500/15 text-emerald-600" : "bg-muted text-muted-foreground"}>
                             {c.isActive ? tr(lang, "active") : tr(lang, "inactive")}
                           </Badge>
                         </TableCell>
@@ -339,10 +404,34 @@ export function CustomersPage() {
               </TableBody>
             </Table>
           </div>
+
+          {/* زر تحميل الدفعة التالية بسلاسة عند الحاجة */}
+          {nextCursor && !loading && (
+            <div className="flex justify-center p-4 border-t border-border bg-muted/10">
+              <Button
+                variant="outline"
+                onClick={() => fetchCustomers(nextCursor)}
+                disabled={loadingMore}
+                className="gap-2 text-sm shadow-sm"
+              >
+                {loadingMore ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {lang === "ar" ? "جاري جلب 100 عميل إضافي..." : "Loading more..."}
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-4 h-4" />
+                    {lang === "ar" ? "تحميل المزيد (100 عميل)" : "Load More (100)"}
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Create/Edit dialog — بدون حقل رقم الهوية */}
+      {/* Dialog إضافة وتعديل العميل */}
       <Dialog open={open} onOpenChange={handleDialogChange}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
@@ -384,7 +473,7 @@ export function CustomersPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete confirm */}
+      {/* حوار تأكيد الحذف */}
       <AlertDialog open={!!deleteId} onOpenChange={(o) => !o && setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

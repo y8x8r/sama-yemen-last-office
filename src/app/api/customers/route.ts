@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser, logAudit, nextSeq, checkModuleAccess } from "@/lib/auth";
 
-/** GET /api/customers — قائمة العملاء مع بحث وتقسيم صفحات */
+/** GET /api/customers — جلب الـ 1000 عميل كاملين بسرعة فائقة وبدون تقييد */
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser(req);
   if (!user) {
@@ -10,50 +10,54 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url);
-  const q = searchParams.get("q")?.trim() ?? "";
-  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10));
-  const limit = Math.max(1, Math.min(100, parseInt(searchParams.get("limit") ?? "50", 10))); // افتراضياً 50 عميلاً
-  const skip = (page - 1) * limit;
+  const q = searchParams.get("q")?.trim();
 
-  const whereClause = q
-    ? {
-        OR: [
-          { fullName: { contains: q, mode: "insensitive" as const } },
-          { customerNumber: { contains: q, mode: "insensitive" as const } },
-          { phoneNumber: { contains: q } },
-          { passportNumber: { contains: q } },
-        ],
-      }
-    : undefined;
+  // جلب كافة السجلات دفعة واحدة مع تحديد الأعمدة لتخفيف حجم البيانات وتسريع النقل
+  const customers = await db.customer.findMany({
+    where: q
+      ? {
+          OR: [
+            { fullName: { contains: q, mode: "insensitive" } },
+            { customerNumber: { contains: q, mode: "insensitive" } },
+            { phoneNumber: { contains: q } },
+            { passportNumber: { contains: q } },
+          ],
+        }
+      : undefined,
+    select: {
+      id: true,
+      customerNumber: true,
+      fullName: true,
+      phoneNumber: true,
+      passportNumber: true,
+      nationalId: true,
+      cardNumber: true,
+      joinedOn: true,
+      referralSource: true,
+      isActive: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
 
-  const [total, customers] = await Promise.all([
-    db.customer.count({ where: whereClause }),
-    db.customer.findMany({
-      where: whereClause,
-      take: limit,
-      skip: skip,
-      orderBy: { createdAt: "desc" },
-    }),
-  ]);
+  const formattedCustomers = customers.map((c) => ({
+    id: c.id,
+    customerNumber: c.customerNumber,
+    fullName: c.fullName,
+    phoneNumber: c.phoneNumber,
+    passportNumber: c.passportNumber,
+    nationalId: c.nationalId,
+    cardNumber: c.cardNumber,
+    joinedOn: c.joinedOn ? c.joinedOn.toISOString().split("T")[0] : "",
+    referralSource: c.referralSource,
+    isActive: c.isActive,
+    createdAt: c.createdAt ? c.createdAt.toISOString() : new Date().toISOString(),
+  }));
 
+  // إرجاع مصفوفة العملاء بداخل كائن ok لتتوافق تماماً مع الواجهة
   return NextResponse.json({
     ok: true,
-    total,
-    page,
-    totalPages: Math.ceil(total / limit),
-    customers: customers.map((c) => ({
-      id: c.id,
-      customerNumber: c.customerNumber,
-      fullName: c.fullName,
-      phoneNumber: c.phoneNumber,
-      passportNumber: c.passportNumber,
-      nationalId: c.nationalId,
-      cardNumber: c.cardNumber,
-      joinedOn: c.joinedOn ? c.joinedOn.toISOString().split("T")[0] : null,
-      referralSource: c.referralSource,
-      isActive: c.isActive,
-      createdAt: c.createdAt ? c.createdAt.toISOString() : new Date().toISOString(),
-    })),
+    customers: formattedCustomers,
   });
 }
 
@@ -113,7 +117,7 @@ export async function POST(req: NextRequest) {
       passportNumber: customer.passportNumber,
       nationalId: customer.nationalId,
       cardNumber: customer.cardNumber,
-      joinedOn: customer.joinedOn ? customer.joinedOn.toISOString().split("T")[0] : null,
+      joinedOn: customer.joinedOn ? customer.joinedOn.toISOString().split("T")[0] : "",
       referralSource: customer.referralSource,
       isActive: customer.isActive,
       createdAt: customer.createdAt ? customer.createdAt.toISOString() : new Date().toISOString(),
